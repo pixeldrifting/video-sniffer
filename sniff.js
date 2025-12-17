@@ -1,6 +1,5 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
-import { execSync } from 'child_process';
 
 const url = process.argv[2];
 if (!url) {
@@ -8,106 +7,83 @@ if (!url) {
   process.exit(1);
 }
 
-const candidatos = [];
-let drmScore = 0;
-const drmEvidencias = [];
-
-const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage();
-
+const encontrados = new Set();
 let playTimestamp = 0;
 
-// ================= DRM (APENAS SINAIS FORTES) =================
+const browser = await chromium.launch({
+  headless: true,
+  args: [
+    '--autoplay-policy=no-user-gesture-required'
+  ]
+});
+
+const page = await browser.newPage();
+
+// ================= CAPTURA REQUEST =================
 page.on('request', req => {
   const u = req.url();
 
-  // Widevine / PlayReady reais
-  if (/widevine|playready/i.test(u)) {
-    drmScore += 3;
-    drmEvidencias.push(`Servidor DRM real: ${u}`);
+  if (
+    playTimestamp &&
+    (
+      u.includes('.m3u8') ||
+      u.includes('.mp4')
+    )
+  ) {
+    encontrados.add(u);
   }
 });
 
+// ================= CAPTURA RESPONSE =================
 page.on('response', res => {
   const u = res.url();
   const ct = res.headers()['content-type'] || '';
 
-  // Segmentos criptografados reais
-  if (u.includes('.m4s') && ct.includes('application/octet-stream')) {
-    drmScore += 2;
-    drmEvidencias.push(`Segmento criptografado: ${u}`);
+  if (
+    playTimestamp &&
+    (
+      ct.includes('video') ||
+      ct.includes('mpegurl') ||
+      u.includes('.m3u8') ||
+      u.includes('.mp4')
+    )
+  ) {
+    encontrados.add(u);
   }
 });
 
-// ================= CAPTURA DE MÍDIA =================
-page.on('response', async res => {
-  try {
-    const mediaUrl = res.url();
-    const headers = res.headers();
-    const ct = headers['content-type'] || '';
-    const length = Number(headers['content-length'] || 0);
+await page.goto(url, { waitUntil: 'networkidle' });
 
-    if (
-      playTimestamp &&
-      Date.now() > playTimestamp &&
-      length > 2_000_000 && // ignora GIF / vídeos decorativos
-      (
-        mediaUrl.match(/\.(mp4|m3u8)(\?|$)/i) ||
-        ct.includes('video') ||
-        ct.includes('mpegurl')
-      )
-    ) {
-      candidatos.push({ url: mediaUrl, length });
-    }
-  } catch {}
-});
-
-await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-// ================= ACIONA PLAYER =================
+// ================= INTERAÇÃO REAL =================
 await page.evaluate(() => {
   const v = document.querySelector('video');
   if (v) {
     v.muted = true;
+    v.scrollIntoView();
+    v.click();
     v.play().catch(() => {});
   }
 });
 
 playTimestamp = Date.now();
-await page.waitForTimeout(15000);
+
+// Espera MAIS tempo (xHamster precisa)
+await page.waitForTimeout(20000);
 await browser.close();
 
-// ================= DECISÃO INTELIGENTE =================
-if (!candidatos.length) {
-  console.log('❌ Nenhum vídeo principal encontrado.');
+// ================= RESULTADO =================
+if (!encontrados.size) {
+  fs.writeFileSync('resultado.txt', 'Nenhum vídeo encontrado');
+  console.log('❌ Nenhum vídeo encontrado.');
   process.exit(0);
 }
 
-// Prioriza MP4 direto
-const mp4s = candidatos.filter(c => c.url.includes('.mp4'));
+const lista = [...encontrados];
 
-const principal = (mp4s.length ? mp4s : candidatos)
-  .sort((a, b) => b.length - a.length)[0];
+// Prioriza MP4
+lista.sort(u => u.includes('.mp4') ? -1 : 1);
 
-// Se existe MP4 direto, DRM é descartado
-const DRM_REAL = drmScore >= 4 && !principal.url.includes('.mp4');
+fs.writeFileSync('videos.txt', lista.join('\n'));
 
-if (DRM_REAL) {
-  const relatorio =
-    `❌ DRM REAL detectado\n\n` +
-    drmEvidencias.join('\n');
-
-  fs.writeFileSync('relatorio_drm.txt', relatorio);
-  console.log(relatorio);
-  process.exit(0);
-}
-
-console.log('🎯 Vídeo principal:', principal.url);
-
-// ================= DOWNLOAD =================
-execSync(
-  `ffmpeg -y -i "${principal.url}" -c copy video.mp4`,
-  { stdio: 'inherit' }
-);
-
-console.log('✅ Download concluído: video.mp4');
+console.log('🎯 Vídeos encontrados:');
+lista.forEach(u => console.log(u));
