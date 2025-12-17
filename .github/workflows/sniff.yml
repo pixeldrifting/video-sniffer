@@ -1,0 +1,35 @@
+name: Video Sniffer
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL da página com vídeo"
+        required: true
+
+jobs:
+  sniff:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: |
+          npm install
+          npx playwright install --with-deps
+
+      - name: Run sniffer
+        run: |
+          node sniff.js "${{ github.event.inputs.url }}"
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: links-de-video
+          path: videos.txt
