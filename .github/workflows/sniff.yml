@@ -34,13 +34,28 @@ jobs:
         run: |
           node sniff.js "${{ github.event.inputs.url }}"
 
-      - name: Upload downloaded video (if exists)
-        if: always()
+      # ================= RESULTADOS TEXTO =================
+      - name: Upload result files
+        if: ${{ hashFiles('videos.txt', 'resultado.txt') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: video-result
+          name: resultado-sniffer
           path: |
-            video.mp4
             videos.txt
             resultado.txt
-            relatorio_drm.txt
+
+      # ================= RELATÓRIO DRM (SE EXISTIR) =================
+      - name: Upload DRM report
+        if: ${{ hashFiles('relatorio_drm.txt') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-drm
+          path: relatorio_drm.txt
+
+      # ================= VÍDEO (SE EXISTIR) =================
+      - name: Upload video
+        if: ${{ hashFiles('video.mp4') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: video
+          path: video.mp4
