@@ -12,24 +12,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           npm install
           npx playwright install --with-deps
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Run sniffer
         run: |
           node sniff.js "${{ github.event.inputs.url }}"
 
-      - name: Upload result
+      - name: Upload downloaded video (if exists)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: links-de-video
-          path: videos.txt
+          name: video-result
+          path: |
+            video.mp4
+            videos.txt
+            resultado.txt
+            relatorio_drm.txt
