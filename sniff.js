@@ -8,25 +8,41 @@ if (!url) {
   process.exit(1);
 }
 
-let drm = false;
 const candidatos = [];
+let drmScore = 0;
+const drmEvidencias = [];
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 
 let playTimestamp = 0;
 
-// === DETECÇÃO DE DRM ===
+// ================= DRM (APENAS SINAIS FORTES) =================
 page.on('request', req => {
-  if (/widevine|drm|license/i.test(req.url())) {
-    drm = true;
+  const u = req.url();
+
+  // Widevine / PlayReady reais
+  if (/widevine|playready/i.test(u)) {
+    drmScore += 3;
+    drmEvidencias.push(`Servidor DRM real: ${u}`);
   }
 });
 
-// === CAPTURA DE MÍDIA ===
+page.on('response', res => {
+  const u = res.url();
+  const ct = res.headers()['content-type'] || '';
+
+  // Segmentos criptografados reais
+  if (u.includes('.m4s') && ct.includes('application/octet-stream')) {
+    drmScore += 2;
+    drmEvidencias.push(`Segmento criptografado: ${u}`);
+  }
+});
+
+// ================= CAPTURA DE MÍDIA =================
 page.on('response', async res => {
   try {
-    const url = res.url();
+    const mediaUrl = res.url();
     const headers = res.headers();
     const ct = headers['content-type'] || '';
     const length = Number(headers['content-length'] || 0);
@@ -34,26 +50,26 @@ page.on('response', async res => {
     if (
       playTimestamp &&
       Date.now() > playTimestamp &&
+      length > 2_000_000 && // ignora GIF / vídeos decorativos
       (
+        mediaUrl.match(/\.(mp4|m3u8)(\?|$)/i) ||
         ct.includes('video') ||
-        ct.includes('mpegurl') ||
-        url.match(/\.(mp4|m3u8)(\?|$)/i)
-      ) &&
-      length > 2_000_000 // ignora GIFs / mini vídeos
+        ct.includes('mpegurl')
+      )
     ) {
-      candidatos.push({ url, length });
+      candidatos.push({ url: mediaUrl, length });
     }
   } catch {}
 });
 
 await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-// === ACIONA PLAYER PRINCIPAL ===
+// ================= ACIONA PLAYER =================
 await page.evaluate(() => {
   const v = document.querySelector('video');
   if (v) {
     v.muted = true;
-    v.play().catch(()=>{});
+    v.play().catch(() => {});
   }
 });
 
@@ -61,31 +77,37 @@ playTimestamp = Date.now();
 await page.waitForTimeout(15000);
 await browser.close();
 
-// === DECISÃO FINAL ===
-if (drm) {
-  fs.writeFileSync(
-    'resultado.txt',
-    '❌ DRM detectado. Download bloqueado por design.'
-  );
-  console.log('❌ DRM detectado. Encerrando.');
-  process.exit(0);
-}
-
+// ================= DECISÃO INTELIGENTE =================
 if (!candidatos.length) {
   console.log('❌ Nenhum vídeo principal encontrado.');
   process.exit(0);
 }
 
-// escolhe o MAIOR (normalmente o principal)
-const principal = candidatos.sort((a, b) => b.length - a.length)[0];
+// Prioriza MP4 direto
+const mp4s = candidatos.filter(c => c.url.includes('.mp4'));
+
+const principal = (mp4s.length ? mp4s : candidatos)
+  .sort((a, b) => b.length - a.length)[0];
+
+// Se existe MP4 direto, DRM é descartado
+const DRM_REAL = drmScore >= 4 && !principal.url.includes('.mp4');
+
+if (DRM_REAL) {
+  const relatorio =
+    `❌ DRM REAL detectado\n\n` +
+    drmEvidencias.join('\n');
+
+  fs.writeFileSync('relatorio_drm.txt', relatorio);
+  console.log(relatorio);
+  process.exit(0);
+}
 
 console.log('🎯 Vídeo principal:', principal.url);
 
-// === DOWNLOAD AUTOMÁTICO ===
-if (principal.url.endsWith('.m3u8')) {
-  execSync(`ffmpeg -y -i "${principal.url}" -c copy video.mp4`, { stdio: 'inherit' });
-} else {
-  execSync(`ffmpeg -y -i "${principal.url}" -c copy video.mp4`, { stdio: 'inherit' });
-}
+// ================= DOWNLOAD =================
+execSync(
+  `ffmpeg -y -i "${principal.url}" -c copy video.mp4`,
+  { stdio: 'inherit' }
+);
 
 console.log('✅ Download concluído: video.mp4');
