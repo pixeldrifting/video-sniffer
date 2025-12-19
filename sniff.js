@@ -13,14 +13,16 @@ const candidatos = [];
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
 
-  // ================= USER AGENT =================
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
-  );
+  // ================= CONTEXTO CORRETO =================
+  const context = await browser.newContext({
+    userAgent:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
+  });
 
-  // ================= BLOQUEIO DE LIXO =================
+  const page = await context.newPage();
+
+  // ================= BLOQUEIO DE RECURSOS INÚTEIS =================
   await page.route('**/*', route => {
     const type = route.request().resourceType();
     if (['image', 'font'].includes(type)) {
@@ -32,7 +34,7 @@ const candidatos = [];
 
   let playTimestamp = 0;
 
-  // ================= DETECÇÃO DE DRM (CONSERVADORA) =================
+  // ================= DETECÇÃO DE DRM (SEM FALSO POSITIVO) =================
   page.on('request', req => {
     const u = req.url();
     if (
@@ -67,7 +69,7 @@ const candidatos = [];
     } catch {}
   });
 
-  // ================= NAVEGAÇÃO (ANTI-TIMEOUT) =================
+  // ================= NAVEGAÇÃO ANTI-TIMEOUT =================
   try {
     await page.goto(targetUrl, {
       waitUntil: 'domcontentloaded',
@@ -77,7 +79,7 @@ const candidatos = [];
     console.log('⚠️ Timeout ao carregar a página, continuando...');
   }
 
-  // ================= ACIONA PLAYER =================
+  // ================= FORÇA PLAYER =================
   try {
     await page.evaluate(() => {
       const v = document.querySelector('video');
@@ -90,16 +92,14 @@ const candidatos = [];
 
   playTimestamp = Date.now();
 
-  // espera tráfego de mídia
   await page.waitForTimeout(20000);
-
   await browser.close();
 
   // ================= DECISÃO FINAL =================
   if (drmDetectado) {
     fs.writeFileSync(
       'resultado.txt',
-      '❌ DRM detectado. O player utiliza proteção de conteúdo.'
+      '❌ DRM detectado. Player protegido.'
     );
     console.log('❌ DRM detectado. Encerrando.');
     process.exit(0);
@@ -114,7 +114,7 @@ const candidatos = [];
     process.exit(0);
   }
 
-  // escolhe o MAIOR arquivo (mais confiável)
+  // escolhe o MAIOR arquivo
   const principal = candidatos.sort((a, b) => b.length - a.length)[0];
 
   fs.writeFileSync(
